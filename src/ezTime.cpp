@@ -8,6 +8,18 @@
 	#endif
 	#ifdef EZTIME_CACHE_EEPROM
 		#include <EEPROM.h>
+
+		//Write iif the value doesn't already match
+		//What we want to write.
+		void safeEEPROMWrite(int addr, int val)
+		{
+			if(EEPROM.read(addr)==val)
+			{
+				return;
+			}
+
+			EEPROM.write(addr, val);
+		}
 	#endif	
 	#if defined(ESP8266)
 		#include <ESP8266WiFi.h>
@@ -885,7 +897,7 @@ String Timezone::getPosix() { return _posix; }
 			#ifdef EZTIME_CACHE_EEPROM
 				eepromBegin();
 				if (_eeprom_address < 0) { triggerError(NO_CACHE_SET); return; }
-				for (int16_t n = _eeprom_address; n < _eeprom_address + EEPROM_CACHE_LEN; n++) EEPROM.write(n, 0);
+				for (int16_t n = _eeprom_address; n < _eeprom_address + EEPROM_CACHE_LEN; n++) safeEEPROMWrite(n, 0);
 				eepromEnd();
 			#endif
 
@@ -918,10 +930,10 @@ String Timezone::getPosix() { return _posix; }
 				eepromBegin();
 				
 				// First byte is cache age, in months since 2018
-				EEPROM.write(addr++, months_since_jan_2018);
+				safeEEPROMWrite(addr++, months_since_jan_2018);
 				
 				// Second byte is length of payload
-				EEPROM.write(addr++, str.length());
+				safeEEPROMWrite(addr++, str.length());
 				
 				// Followed by payload, compressed. Every 4 bytes to three by encoding only 6 bits, ASCII all-caps
 				str.toUpperCase();
@@ -935,31 +947,31 @@ String Timezone::getPosix() { return _posix; }
 							break;
 						case 1:
 							store |= c >> 4;				//high two of 2nd
-							EEPROM.write(addr++, store);	 
+							safeEEPROMWrite(addr++, store);	 
 							store = c << 4;					//low four of 2nd
 							break;
 						case 2:
 							store |= c >> 2;				//high four of 3rd
-							EEPROM.write(addr++, store);
+							safeEEPROMWrite(addr++, store);
 							store = c << 6;					//low two of third
 							break;
 						case 3:
 							store |= c;						//all of 4th
-							EEPROM.write(addr++, store);
+							safeEEPROMWrite(addr++, store);
 							store = 0;
 					}
 				}
-				if (store) EEPROM.write(addr++, store);
+				if (store) safeEEPROMWrite(addr++, store);
 				
 				// Fill rest of cache (except last byte) with zeroes
-				for (; addr < last_byte; addr++) EEPROM.write(addr, 0);
+				for (; addr < last_byte; addr++) safeEEPROMWrite(addr, 0);
 
 				// Add all bytes in cache % 256 and add 42, that is the checksum written to last byte.
 				// The 42 is because then checksum of all zeroes then isn't zero.
 				uint8_t checksum = 0;
 				for (uint16_t n = _eeprom_address; n < last_byte; n++) checksum += EEPROM.read(n);
 				checksum += 42;
-				EEPROM.write(last_byte, checksum);
+				safeEEPROMWrite(last_byte, checksum);
 				eepromEnd();
 				infoln();
 				return true;
@@ -968,10 +980,18 @@ String Timezone::getPosix() { return _posix; }
 			#ifdef EZTIME_CACHE_NVS
 				if (_nvs_name == "" || _nvs_key == "") return false;
 				infoln(F("Caching timezone data"));
+		
+				String tmp = String(months_since_jan_2018) + " " + str;
+				
+				//I have not found a straight answer on if this check is needed.
+				//The performance hit should be so tiny  that it's irrelevant though,
+				//And we really don't want to be wearing out flash.
 				Preferences prefs;
 				prefs.begin(_nvs_name.c_str(), false);
-				String tmp = String(months_since_jan_2018) + " " + str;
-				prefs.putString(_nvs_key.c_str(), tmp);
+				if(prefs.getString(_nvs_name.c_str(),"") != tmp)
+				{
+					prefs.putString(_nvs_key.c_str(), tmp);
+				}
 				prefs.end();
 				return true;
 			#endif
